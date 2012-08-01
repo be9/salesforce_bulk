@@ -2,16 +2,16 @@ module SalesforceBulk
   class BatchResult
     
     # A boolean indicating if record was created. If updated value is false.
-    attr_accessor :created
+    attr_reader :created
     
     # The error message.
-    attr_accessor :error
+    attr_reader :error
     
     # The record's unique id.
-    attr_accessor :id
+    attr_reader :id
     
     # If record was created successfully. If false then an error message is provided. 
-    attr_accessor :success
+    attr_reader :success
     
     def initialize(id, success, created, error)
       @id = id

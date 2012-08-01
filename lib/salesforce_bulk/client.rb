@@ -1,88 +1,97 @@
 module SalesforceBulk
   # Interface for operating the Salesforce Bulk REST API
   class Client
-    # If true, print API debugging information to stdout. Defaults to false.
-    attr_accessor :debugging
-    
-    # The host to use for authentication. Defaults to login.salesforce.com.
-    attr_accessor :host
-    
-    # The instance host to use for API calls. Determined from login response.
-    attr_accessor :instance_host
-    
-    # The Salesforce password
-    attr_accessor :password
-    
-    # The Salesforce security token
-    attr_accessor :token
-    
-    # The Salesforce username
-    attr_accessor :username
-    
-    # The API version the client is using. Defaults to 24.0.
-    attr_accessor :version
-    
+    # The HTTP connection we will be using to connect to Salesforce.com
+    attr_accessor :connection
+
     def initialize(options={})
-      if options.is_a?(String)
-        options = YAML.load_file(options)
-        options.symbolize_keys!
+      @connection = Connection.new(options)
+    end
+
+    def connected?
+      @connection.connected?
+    end
+
+    def disconnect
+      @connection.disconnect
+    end
+
+    def connect options = {}
+      @connection.connect(options)
+    end
+
+    def new_job operation, sobject, options = {}
+      Job.new(add_job(operation, sobject, options), self)
+    end
+
+    def add_job operation, sobject, options={}
+      operation = operation.to_sym.downcase
+      
+      raise ArgumentError.new("Invalid operation: #{operation}") unless Job.valid_operation?(operation)
+      
+      options.assert_valid_keys(:external_id_field_name, :concurrency_mode)
+      
+      if options[:concurrency_mode]
+        concurrency_mode = options[:concurrency_mode].capitalize
+        raise ArgumentError.new("Invalid concurrency mode: #{concurrency_mode}") unless Job.valid_concurrency_mode?(concurrency_mode)
       end
       
-      options = {:debugging => false, :host => 'login.salesforce.com', :version => 24.0}.merge(options)
-      
-      options.assert_valid_keys(:username, :password, :token, :debugging, :host, :version)
-      
-      self.username = options[:username]
-      self.password = "#{options[:password]}#{options[:token]}"
-      self.token = options[:token]
-      self.debugging = options[:debugging]
-      self.host = options[:host]
-      self.version = options[:version]
-      
-      @api_path_prefix = "/services/async/#{self.version}/"
-      @valid_operations = [:delete, :insert, :update, :upsert, :query]
-      @valid_concurrency_modes = ['Parallel', 'Serial']
-    end
-    
-    def authenticate
-      xml = '<?xml version="1.0" encoding="utf-8"?>'
-      xml += '<env:Envelope xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
-      xml += ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-      xml += ' xmlns:env="http://schemas.xmlsoap.org/soap/envelope/">'
-      xml += "<env:Body>"
-      xml += '<n1:login xmlns:n1="urn:partner.soap.sforce.com">'
-      xml += "<n1:username>#{self.username}</n1:username>"
-      xml += "<n1:password>#{self.password}</n1:password>"
-      xml += "</n1:login>"
-      xml += "</env:Body>"
-      xml += "</env:Envelope>"
-      
-      response = http_post("/services/Soap/u/#{self.version}", xml, 'Content-Type' => 'text/xml', 'SOAPAction' => 'login')
-      
-      data = XmlSimple.xml_in(response.body, :ForceArray => false)
-      result = data['Body']['loginResponse']['result']
-      
-      @session_id = result['sessionId']
-      
-      self.instance_host = "#{instance_id(result['serverUrl'])}.salesforce.com"
-    end
-    
-    def abort_job(jobId)
-      xml = '<?xml version="1.0" encoding="utf-8"?>'
+      xml  = '<?xml version="1.0" encoding="utf-8"?>'
       xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
-      xml += "<state>Aborted</state>"
+      xml += "  <operation>#{operation}</operation>"
+      xml += "  <object>#{sobject}</object>" if sobject
+      xml += "  <externalIdFieldName>#{options[:external_id_field_name]}</externalIdFieldName>" if options[:external_id_field_name]
+      xml += "  <concurrencyMode>#{options[:concurrency_mode]}</concurrencyMode>" if options[:concurrency_mode]
+      xml += "  <contentType>CSV</contentType>"
       xml += "</jobInfo>"
       
-      response = http_post("job/#{jobId}", xml)
-      data = XmlSimple.xml_in(response.body, :ForceArray => false)
-      Job.new_from_xml(data)
+      @connection.http_post_xml("job", xml)
     end
-    
-    def add_batch(jobId, data)
+
+    def abort_job job_id
+      xml  = '<?xml version="1.0" encoding="utf-8"?>'
+      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
+      xml += '  <state>Aborted</state>'
+      xml += '</jobInfo>'
+      
+      @connection.http_post_xml("job/#{job_id}", xml)
+    end
+
+    def close_job job_id
+      xml  = '<?xml version="1.0" encoding="utf-8"?>'
+      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
+      xml += '  <state>Closed</state>'
+      xml += '</jobInfo>'
+      
+      @connection.http_post_xml("job/#{job_id}", xml)
+    end
+
+    def get_job_info job_id
+      @connection.http_get_xml("job/#{job_id}")
+    end
+
+    def get_batch_info job_id, batch_id
+      @connection.http_get_xml("job/#{jobId}/batch/#{batchId}")
+    end
+
+    def find_job job_id
+      Job.new get_job(job_id)
+    end
+
+    def find_batch job_id, batch_id
+      Batch.new get_batch(job_id, batch_id)
+    end
+
+    def create_batch job_id, data
+      Batch.new add_batch(job_id, data)
+    end
+
+    def add_batch job_id, data
       body = data
       
       if data.is_a?(Array)
-        raise ArgumentError, "Data set exceeds 10000 record limit by #{data.length - 10000}" if data.length > 10000
+        raise ArgumentError, "Batch data set exceeds #{Batch.max_records} record limit by #{data.length - Batch.max_records}" if data.length > Batch.max_records
+        raise ArgumentError, "Batch data set is empty" if data.length < 1
         
         keys = data.first.keys
         body = keys.to_csv
@@ -95,70 +104,44 @@ module SalesforceBulk
       
       # Despite the content for a query operation batch being plain text we 
       # still have to specify CSV content type per API docs.
-      response = http_post("job/#{jobId}/batch", body, "Content-Type" => "text/csv; charset=UTF-8")
-      result = XmlSimple.xml_in(response.body, 'ForceArray' => false)
-      Batch.new_from_xml(result)
+      @connection.http_post_xml("job/#{job_id}/batch", body, "Content-Type" => "text/csv; charset=UTF-8")
     end
     
-    def add_job(operation, sobject, options={})
-      operation = operation.to_sym.downcase
-      
-      raise ArgumentError.new("Invalid operation: #{operation}") unless @valid_operations.include?(operation)
-      
-      options.assert_valid_keys(:external_id_field_name, :concurrency_mode)
-      
-      if options[:concurrency_mode]
-        concurrency_mode = options[:concurrency_mode].capitalize
-        raise ArgumentError.new("Invalid concurrency mode: #{concurrency_mode}") unless @valid_concurrency_modes.include?(concurrency_mode)
-      end
-      
-      xml = '<?xml version="1.0" encoding="utf-8"?>'
-      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
-      xml += "<operation>#{operation}</operation>"
-      xml += "<object>#{sobject}</object>"
-      xml += "<externalIdFieldName>#{options[:external_id_field_name]}</externalIdFieldName>" if options[:external_id_field_name]
-      xml += "<concurrencyMode>#{options[:concurrency_mode]}</concurrencyMode>" if options[:concurrency_mode]
-      xml += "<contentType>CSV</contentType>"
-      xml += "</jobInfo>"
-      
-      response = http_post("job", xml)
-      data = XmlSimple.xml_in(response.body, :ForceArray => false)
-      job = Job.new_from_xml(data)
-    end
-    
-    def batch_info_list(jobId)
-      response = http_get("job/#{jobId}/batch")
-      result = XmlSimple.xml_in(response.body, 'ForceArray' => false)
+    def get_batch_list(job_id)
+      result = @connection.http_get_xml("job/#{job_id}/batch")
       
       if result['batchInfo'].is_a?(Array)
-        result['batchInfo'].collect do |info|
-          Batch.new_from_xml(info)
-        end
+        result['batchInfo'].collect { |info| Batch.new(info) }
       else
-        [Batch.new_from_xml(result['batchInfo'])]
+        [Batch.new(result['batchInfo'])]
+      end
+    end
+
+    def get_batch_request(job_id, batch_id)
+      response = http_get("job/#{job_id}/batch/#{batch_id}/request")
+        
+      CSV.parse(response.body, :headers => true) do |row|
+        result << BatchResult.new(row[0], row[1].to_b, row[2].to_b, row[3])
       end
     end
     
-    def batch_info(jobId, batchId)
-      response = http_get("job/#{jobId}/batch/#{batchId}")
-      result = XmlSimple.xml_in(response.body, 'ForceArray' => false)
-      Batch.new_from_xml(result)
-    end
-    
-    def batch_result(jobId, batchId)
-      response = http_get("job/#{jobId}/batch/#{batchId}/result")
+    def get_batch_result(job_id, batch_id)
+      response = http_get("job/#{job_id}/batch/#{batch_id}/result")
       
+      #Query Result
       if response.body =~ /<.*?>/m
         result = XmlSimple.xml_in(response.body)
         
         if result['result'].present?
-          results = query_result(jobId, batchId, result['result'].first)
+          results = get_query_result(job_id, batch_id, result['result'].first)
           
-          collection = QueryResultCollection.new(self, jobId, batchId, result['result'].first, result['result'])
+          collection = QueryResultCollection.new(self, job_id, batch_id, result['result'].first, result['result'])
           collection.replace(results)
         end
+
+      #Batch Result
       else
-        result = BatchResultCollection.new(jobId, batchId)
+        result = BatchResultCollection.new(job_id, batch_id)
         
         CSV.parse(response.body, :headers => true) do |row|
           result << BatchResult.new(row[0], row[1].to_b, row[2].to_b, row[3])
@@ -168,7 +151,7 @@ module SalesforceBulk
       end
     end
     
-    def query_result(job_id, batch_id, result_id)
+    def get_query_result(job_id, batch_id, result_id)
       headers = {"Content-Type" => "text/csv; charset=UTF-8"}
       response = http_get("job/#{job_id}/batch/#{batch_id}/result/#{result_id}", headers)
       
@@ -184,73 +167,8 @@ module SalesforceBulk
       
       result
     end
-    
-    def close_job(jobId)
-      xml = '<?xml version="1.0" encoding="utf-8"?>'
-      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
-      xml += "<state>Closed</state>"
-      xml += "</jobInfo>"
-      
-      response = http_post("job/#{jobId}", xml)
-      data = XmlSimple.xml_in(response.body, :ForceArray => false)
-      Job.new_from_xml(data)
-    end
-    
-    def job_info(jobId)
-      response = http_get("job/#{jobId}")
-      data = XmlSimple.xml_in(response.body, :ForceArray => false)
-      Job.new_from_xml(data)
-    end
-    
-    def http_post(path, body, headers={})
-      host = self.host
-      
-      headers = {'Content-Type' => 'application/xml'}.merge(headers)
-      
-      if @session_id
-        headers['X-SFDC-Session'] = @session_id
-        host = self.instance_host
-        path = "#{@api_path_prefix}#{path}"
-      end
-      
-      response = https_request(host).post(path, body, headers)
-      
-      if response.is_a?(Net::HTTPSuccess)
-        response
-      else
-        raise SalesforceError.new(response)
-      end
-    end
-    
-    def http_get(path, headers={})
-      path = "#{@api_path_prefix}#{path}"
-      
-      headers = {'Content-Type' => 'application/xml'}.merge(headers)
-      
-      if @session_id
-        headers['X-SFDC-Session'] = @session_id
-      end
-      
-      response = https_request(self.instance_host).get(path, headers)
-      
-      if response.is_a?(Net::HTTPSuccess)
-        response
-      else
-        raise SalesforceError.new(response)
-      end
-    end
-    
-    def https_request(host)
-      req = Net::HTTP.new(host, 443)
-      req.use_ssl = true
-      req.verify_mode = OpenSSL::SSL::VERIFY_NONE
-      req
-    end
-    
-    def instance_id(url)
-      url.match(/:\/\/([a-zA-Z0-9-]{2,}).salesforce/)[1]
-    end
-    
+
+    ## Operations
     def delete(sobject, data)
       perform_operation(:delete, sobject, data)
     end
@@ -271,21 +189,21 @@ module SalesforceBulk
       perform_operation(:upsert, sobject, data, external_id)
     end
     
-    def perform_operation(operation, sobject, data, external_id=nil)
-      job = add_job(operation, sobject, :external_id_field_name => external_id)
-      batch = add_batch(job.id, data)
-      job = close_job(job.id)
+    def perform_operation(operation, sobject, data, external_id = nil, batch_size = nil)
+      job = new_job(operation, sobject, :external_id_field_name => external_id)
       
-      while true
-        batch = batch_info(job.id, batch.id)
-        
-        break if !batch.queued? && !batch.in_progress?
-        
+      data.each_slice(batch_size || Batch.batch_size) do |records|
+        job.add_batch(records)
+      end
+
+      job.close
+      
+      until job.finished?
+        job.refresh
         sleep 2
       end
       
-      batch_result(job.id, batch.id)
+      job.get_results
     end
-    
   end
 end
