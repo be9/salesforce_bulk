@@ -1,4 +1,4 @@
-module SalesforceBulk
+module SalesforceBulk2
   class QueryResultCollection < Array
     
     attr_reader :client

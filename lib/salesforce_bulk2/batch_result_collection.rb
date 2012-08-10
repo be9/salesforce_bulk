@@ -1,29 +1,20 @@
-module SalesforceBulk
+module SalesforceBulk2
   class BatchResultCollection < Array
     
-    attr_reader :batch_id
-    attr_reader :job_id
-    
-    def initialize(job_id, batch_id)
-      @job_id = job_id
-      @batch_id = batch_id
-    end
-    
     def any_failures?
-      self.any? { |result| result.error.length > 0 }
+      self.any? { |result| result.error? }
     end
     
     def failed
-      self.select { |result| result.error.length > 0 }
+      self.select { |result| result.error? }
     end
     
     def completed
-      self.select { |result| result.success }
+      self.select { |result| result.successful? }
     end
     
     def created
-      self.select { |result| result.success && result.created }
+      self.select { |result| result.successful? && result.created? }
     end
-    
   end
 end

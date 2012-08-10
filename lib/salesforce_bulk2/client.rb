@@ -1,4 +1,4 @@
-module SalesforceBulk
+module SalesforceBulk2
   # Interface for operating the Salesforce Bulk REST API
   class Client
     # If true, print API debugging information to stdout. Defaults to false.
@@ -19,8 +19,11 @@ module SalesforceBulk
     # The Salesforce username
     attr_reader :username
     
-    # The API version the client is using. Defaults to 24.0.
+    # The API version the client is using
     attr_reader :version
+
+    #List of jobs associatd with this client
+    attr_accessor :jobs
 
 
     # Defaults
@@ -39,10 +42,12 @@ module SalesforceBulk
       
       @username = options[:username]
       @password = "#{options[:password]}#{options[:token]}"
-      @token    = options[:token]
+      @token    = options[:token] || ''
       @host     = options[:host] || @@host
       @version  = options[:version] || @@version
       @debugging = options[:debugging] || @@debugging
+
+      @jobs = []
     end
 
     def connect options = {}
@@ -160,40 +165,52 @@ module SalesforceBulk
 
 
     #Job related
-    def new_job operation, options = {}
-      Job.new(self, operation, options)
+    def new_job options = {}
+      job = Job.create(self, options)
+      @jobs << job
+      job
     end
 
     def find_job id
-      Job.find(connection, id)
+      job = Job.find(connection, id)
+      @jobs << job
+      job
+    end
+
+    def close_jobs
+      @jobs.map(&:close)
+    end
+
+    def abort_jobs
+      @jobs.map(&:abort)
     end
 
 
     ## Operations
-    def delete(sobject, data)
-      perform_operation(:delete, sobject, data)
+    def delete(sobject, data, batch_size = nil)
+      perform_operation(:delete, sobject, data, :batch_size => nil)
     end
     
-    def insert(sobject, data)
-      perform_operation(:insert, sobject, data)
+    def insert(sobject, data, batch_size = nil)
+      perform_operation(:insert, sobject, data, :batch_size => nil)
     end
     
-    def query(sobject, data)
-      perform_operation(:query, sobject, data)
+    def query(sobject, data, batch_size = nil)
+      perform_operation(:query, sobject, data, :batch_size => nil)
     end
     
-    def update(sobject, data)
-      perform_operation(:update, sobject, data)
+    def update(sobject, data, batch_size = nil)
+      perform_operation(:update, sobject, data, :batch_size => nil)
     end
     
-    def upsert(sobject, external_id, data)
-      perform_operation(:upsert, sobject, data, external_id)
+    def upsert(sobject, data, external_id, batch_size = nil)
+      perform_operation(:upsert, sobject, data, :external_id => external_id, :batch_size => batch_size)
     end
     
-    def perform_operation(operation, sobject, data, external_id = nil, batch_size = nil)
-      job = new_job(operation, sobject, :external_id_field_name => external_id)
+    def perform_operation(operation, sobject, data, options = {})
+      job = new_job(operation: operation, object: sobject, :external_id => options[:external_id])
 
-      job.add_data(records)
+      job.add_data(data, options[:batch_size])
       job.close
       
       until job.finished?
@@ -201,7 +218,7 @@ module SalesforceBulk
         sleep 2
       end
       
-      job.get_results
+      return job.get_results
     end
   end
 end

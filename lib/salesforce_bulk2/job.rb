@@ -1,10 +1,11 @@
-module SalesforceBulk
+module SalesforceBulk2
   class Job
     attr_reader :client
 
     attr_reader :concurrency_mode
-    attr_reader :external_id_field_name
+    attr_reader :external_id
     attr_reader :data
+    attr_reader :xml_data
 
     @@fields = [:id, :operation, :object, :createdById, :state, :createdDate, 
       :systemModstamp, :externalIdFieldName, :concurrencyMode, :contentType, 
@@ -28,6 +29,36 @@ module SalesforceBulk
       @@valid_concurrency_modes.include?(concurrency_mode)
     end
 
+    def self.create client, options = {}
+      job = Job.new(client)
+
+      options.assert_valid_keys(:external_id, :concurrency_mode, :object, :operation)
+
+      operation = options[:operation].to_sym.downcase
+      raise ArgumentError.new("Invalid operation: #{operation}") unless Job.valid_operation?(operation)
+
+      external_id = options[:external_id]
+      concurrency_mode = options[:concurrency_mode]
+      object = options[:object]
+      
+      if concurrency_mode
+        concurrency_mode = concurrency_mode.capitalize
+        raise ArgumentError.new("Invalid concurrency mode: #{concurrency_mode}") unless Job.valid_concurrency_mode?(concurrency_mode)
+      end
+      
+      xml  = '<?xml version="1.0" encoding="utf-8"?>'
+      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
+      xml += "  <operation>#{operation}</operation>"
+      xml += "  <object>#{object}</object>" if object
+      xml += "  <externalIdFieldName>#{external_id}</externalIdFieldName>" if external_id
+      xml += "  <concurrencyMode>#{concurrency_mode}</concurrencyMode>" if concurrency_mode
+      xml += "  <contentType>CSV</contentType>"
+      xml += "</jobInfo>"
+
+      job.update(client.http_post_xml("job", xml))
+      job
+    end
+
     def self.find client, id
       Job.new(client)
       job.id = id
@@ -35,59 +66,30 @@ module SalesforceBulk
       job
     end
 
-    def self.create client, options = {}
-      @client = client
-
-      options.assert_valid_keys(:external_id_field_name, :concurrency_mode, :object, :operation)
-
-      @operation = options[:operation].to_sym.downcase
-      raise ArgumentError.new("Invalid operation: #{operation}") unless Job.valid_operation?(operation)
-
-      @external_id_field_name = options[:external_id_field_name]
-      @concurrency_mode = options[:concurrency_mode]
-      @object = options[:object]
-      
-      if options[:concurrency_mode]
-        concurrency_mode = options[:concurrency_mode].capitalize
-        raise ArgumentError.new("Invalid concurrency mode: #{concurrency_mode}") unless Job.valid_concurrency_mode?(concurrency_mode)
-      end
-      
-      xml  = '<?xml version="1.0" encoding="utf-8"?>'
-      xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
-      xml += "  <operation>#{operation}</operation>"
-      xml += "  <object>#{options[:sobject]}</object>" if options[:sobject]
-      xml += "  <externalIdFieldName>#{options[:external_id_field_name]}</externalIdFieldName>" if options[:external_id_field_name]
-      xml += "  <concurrencyMode>#{options[:concurrency_mode]}</concurrencyMode>" if options[:concurrency_mode]
-      xml += "  <contentType>CSV</contentType>"
-      xml += "</jobInfo>"
-      
-      update(@client.http_post_xml("job", xml))
+    def refresh
+      xml_data = @client.http_get_xml("job/#{@id}")
+      update(xml_data)
     end
 
     def initialize client
       @client = client
     end
 
-    def refresh
-      response = @client.http_get_xml("job/#{job_id}")
-      update(refresh)
-      self
-    end
-
     def new_batch data
-      Batch.new(job, data)
+      Batch.create(self, data)
     end
 
     def get_batches
-      result = @client.http_get_xml("job/#{@job_id}/batch")
-      
+      result = @client.http_get_xml("job/#{@id}/batch")
+
       if result['batchInfo'].is_a?(Array)
-        result['batchInfo'].collect { |info| Batch.new(job, info) }
+        result['batchInfo'].collect { |info| Batch.new(self, info) }
+      elsif result['batchInfo']
+        [Batch.new(self, result['batchInfo'])]
       else
-        [Batch.new(job, result['batchInfo'])]
+        []
       end
     end
-
 
     def abort
       xml  = '<?xml version="1.0" encoding="utf-8"?>'
@@ -95,7 +97,7 @@ module SalesforceBulk
       xml += '  <state>Aborted</state>'
       xml += '</jobInfo>'
       
-      @client.http_post_xml("job/#{job_id}", xml)
+      @client.http_post_xml("job/#{@id}", xml)
     end
 
     def close
@@ -104,19 +106,16 @@ module SalesforceBulk
       xml += '  <state>Closed</state>'
       xml += '</jobInfo>'
       
-      @client.http_post_xml("job/#{job_id}", xml)
+      @client.http_post_xml("job/#{@id}", xml)
     end
 
     def update xml_data
-      #Check fields
-      xml_data.assert_valid_keys(@@fields)
-
       #Assign object
       @xml_data = xml_data
 
       #Mass assign the defaults
       @@fields.each do |field|
-        instance_variable_set(field, xml_data[field])
+        instance_variable_set(:"@#{field}", xml_data[field.to_s])
       end
 
       #Special cases and data formats
@@ -137,27 +136,27 @@ module SalesforceBulk
       @apex_processing_time = xml_data['apexProcessingTime'].to_i
     end
 
-    def add_data data
-      data.each_slice(Batch.batch_size) do |records|
+    def add_data data, batch_size = nil
+      data.each_slice(batch_size || Batch.batch_size) do |records|
         new_batch(records)
       end
     end
 
-    def close
-      update(@client.close_job(@id))
-    end
-
-    def abort
-      update(@client.abort_job(@id))
-    end
-
-    def refresh
-      update(@client.get_job_info(@id))
-    end
-
     def get_results
-      batch_list.map(&:result).flatten
+      results = BatchResultCollection.new
+
+      get_batches.each { |batch| results << batch.get_result }
+
+      results.flatten
     end
+
+    # def get_requests
+    #   results = BatchResultCollection.new
+
+    #   get_batches.each { |batch| results << batch.get_request }
+
+    #   results.flatten
+    # end
 
     #Statuses
     def batches_finished?

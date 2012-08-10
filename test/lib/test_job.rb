@@ -27,7 +27,7 @@ class TestJob < Test::Unit::TestCase
     assert_equal job.created_at, DateTime.parse('2012-05-30T04:08:30.000Z')
     assert_equal job.completed_at, DateTime.parse('2012-05-30T04:08:30.000Z')
     assert_equal job.state, 'Open'
-    assert_equal job.external_id_field_name, 'Id__c'
+    assert_equal job.external_id, 'Id__c'
     assert_equal job.concurrency_mode, 'Parallel'
     assert_equal job.content_type, 'CSV'
     assert_equal job.queued_batches, 0
@@ -87,7 +87,7 @@ class TestJob < Test::Unit::TestCase
       .with(:body => request, :headers => @headers)
       .to_return(:body => response, :status => 200)
     
-    job = @client.add_job(:upsert, :VideoEvent__c, :external_id_field_name => :Id__c)
+    job = @client.add_job(:upsert, :VideoEvent__c, :external_id => :Id__c)
     
     assert_requested :post, "#{api_url(@client)}job", :body => request, :headers => @headers, :times => 1
     
@@ -98,7 +98,7 @@ class TestJob < Test::Unit::TestCase
     assert_equal job.created_at, DateTime.parse('2012-05-29T21:50:47.000Z')
     assert_equal job.completed_at, DateTime.parse('2012-05-29T21:50:47.000Z')
     assert_equal job.state, 'Open'
-    assert_equal job.external_id_field_name, 'Id__c'
+    assert_equal job.external_id, 'Id__c'
     assert_equal job.concurrency_mode, 'Parallel'
     assert_equal job.content_type, 'CSV'
     assert_equal job.queued_batches, 0
@@ -153,7 +153,7 @@ class TestJob < Test::Unit::TestCase
     assert_equal job.created_at, DateTime.parse('2012-05-29T23:51:53.000Z')
     assert_equal job.completed_at, DateTime.parse('2012-05-29T23:51:53.000Z')
     assert_equal job.state, 'Closed'
-    assert_equal job.external_id_field_name, 'Id__c'
+    assert_equal job.external_id, 'Id__c'
     assert_equal job.concurrency_mode, 'Parallel'
     assert_equal job.content_type, 'CSV'
     assert_equal job.queued_batches, 0
@@ -190,7 +190,7 @@ class TestJob < Test::Unit::TestCase
     assert_equal job.created_at, DateTime.parse('2012-05-30T00:16:04.000Z')
     assert_equal job.completed_at, DateTime.parse('2012-05-30T00:16:04.000Z')
     assert_equal job.state, 'Aborted'
-    assert_equal job.external_id_field_name, 'Id__c'
+    assert_equal job.external_id, 'Id__c'
     assert_equal job.concurrency_mode, 'Parallel'
     assert_equal job.content_type, 'CSV'
     assert_equal job.queued_batches, 0
@@ -226,7 +226,7 @@ class TestJob < Test::Unit::TestCase
     assert_equal job.created_at, DateTime.parse('2012-05-30T04:08:30.000Z')
     assert_equal job.completed_at, DateTime.parse('2012-05-30T04:08:30.000Z')
     assert_equal job.state, 'Open'
-    assert_equal job.external_id_field_name, 'Id__c'
+    assert_equal job.external_id, 'Id__c'
     assert_equal job.concurrency_mode, 'Parallel'
     assert_equal job.content_type, 'CSV'
     assert_equal job.queued_batches, 0
@@ -249,7 +249,7 @@ class TestJob < Test::Unit::TestCase
     stub_request(:post, "#{api_url(@client)}job").to_return(:body => response, :status => 500)
     
     assert_raise SalesforceBulk::SalesforceError do
-      job = @client.add_job(:upsert, :SomeNonExistingObject__c, :external_id_field_name => :Id__c)
+      job = @client.add_job(:upsert, :SomeNonExistingObject__c, :external_id => :Id__c)
     end
   end
   

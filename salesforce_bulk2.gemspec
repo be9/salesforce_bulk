@@ -1,10 +1,10 @@
 # -*- encoding: utf-8 -*-
 $:.push File.expand_path("../lib", __FILE__)
-require "salesforce_bulk/version"
+require "salesforce_bulk2/version"
 
 Gem::Specification.new do |s|
   s.name        = "salesforce_bulk2"
-  s.version     = SalesforceBulk::VERSION
+  s.version     = SalesforceBulk2::VERSION
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Adam Kerr", "Jorge Valdivia", "Javier Julio"]
   s.email       = ["ajrkerr@gmail.com", "jorge@valdivia.me", "jjfutbol@gmail.com"]

@@ -1,23 +1,10 @@
-module SalesforceBulk
-  class BatchResult
-    
-    # A boolean indicating if record was created. If updated value is false.
-    attr_reader :created
-    
-    # The error message.
-    attr_reader :error
-    
-    # The record's unique id.
-    attr_reader :id
-    
-    # If record was created successfully. If false then an error message is provided. 
-    attr_reader :success
-    
+module SalesforceBulk2
+  class BatchResult < Hash
     def initialize(id, success, created, error)
-      @id = id
-      @success = success
-      @created = created
-      @error = error
+      self['id'] = id
+      self['success'] = success
+      self['created'] = created
+      self['error'] = error
     end
     
     def error?
@@ -34,6 +21,22 @@ module SalesforceBulk
     
     def updated?
       !created && success
+    end
+
+    def method_missing method, *args, &block
+      if has_key? method.to_s
+        self[method.to_s] 
+      else
+        super method, *args, &block
+      end
+    end
+
+    def respond_to? method
+      if has_key? method.to_sym
+        return true
+      else
+        super
+      end
     end
   end
 end

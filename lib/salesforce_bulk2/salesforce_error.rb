@@ -1,4 +1,4 @@
-module SalesforceBulk
+module SalesforceBulk2
   # An exception raised when any non successful request is made through the Salesforce Bulk API.
   class SalesforceError < StandardError
     # The Net::HTTPResponse instance from the API call.

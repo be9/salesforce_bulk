@@ -1,6 +1,7 @@
-module SalesforceBulk
+module SalesforceBulk2
   class Batch
     attr_accessor :session_id
+    attr_accessor :batch_size
 
     attr_reader :apex_processing_time
     attr_reader :api_active_processing_time
@@ -16,10 +17,25 @@ module SalesforceBulk
 
     @@batch_size = 10000
 
+    def self.batch_size
+      @@batch_size
+    end
 
-    def initialize job
+    def self.batch_size= batch_size
+      @@batch_size = batch_size
+    end
+
+    def batch_size
+      @batch_size || @@batch_size
+    end
+
+
+    def initialize job, data = nil
       @job = job
-      @connection = job.connection
+      @job_id = job.id
+      @client = job.client
+
+      update(data) if data
     end
 
     def self.create job, data
@@ -28,7 +44,7 @@ module SalesforceBulk
     end
 
     def self.find job, batch_id
-      batch = Batch.new job
+      batch = Batch.new(job)
       batch.id = batch_id
       batch.refresh
       batch
@@ -36,10 +52,12 @@ module SalesforceBulk
 
     def self.find job, batch_id
       @job = job
-      @connection = job.connection
+      @client = job.client
     end
 
     def execute data
+      raise Exception.new "Already executed" if @data
+
       @data = data
       body = data
       
@@ -55,51 +73,53 @@ module SalesforceBulk
           body += item_values.to_csv
         end
       end
-      
+
       # Despite the content for a query operation batch being plain text we 
       # still have to specify CSV content type per API docs.
-      @connection.http_post_xml("job/#{job_id}/batch", body, "Content-Type" => "text/csv; charset=UTF-8")
+      @client.http_post_xml("job/#{@job_id}/batch", body, "Content-Type" => "text/csv; charset=UTF-8")
     end
 
-    def refresh
-      @connection.http_get_xml("job/#{@job_id}/batch/#{@batch_id}")
-    end
-
-    def get_batch_request(job_id, batch_id)
-      response = http_get("job/#{job_id}/batch/#{batch_id}/request")
+    def get_request
+      response = @client.http_get("job/#{@job_id}/batch/#{@id}/request")
 
       CSV.parse(response.body, :headers => true)
     end
     
-    def get_batch_result(job_id, batch_id)
-      response = http_get("job/#{job_id}/batch/#{batch_id}/result")
+    def get_result
+      response = @client.http_get("job/#{@job_id}/batch/#{@id}/result")
       
       #Query Result
       if response.body =~ /<.*?>/m
         result = XmlSimple.xml_in(response.body)
         
         if result['result'].present?
-          results = get_query_result(job_id, batch_id, result['result'].first)
+          results = get_query_result(@id, result['result'].first)
           
-          collection = QueryResultCollection.new(self, job_id, batch_id, result['result'].first, result['result'])
+          collection = QueryResultCollection.new(self, @id, result['result'].first, result['result'])
           collection.replace(results)
         end
 
       #Batch Result
       else
-        result = BatchResultCollection.new(job_id, batch_id)
+        results = BatchResultCollection.new
+        requests = get_request
         
+        i = 0
         CSV.parse(response.body, :headers => true) do |row|
-          result << BatchResult.new(row[0], row[1].to_b, row[2].to_b, row[3])
+          result = BatchResult.new(row[0], row[1].to_b, row[2].to_b, row[3])
+          result['request'] = requests[i]
+          results << result
+
+          i += 1
         end
         
-        result
+        return results
       end
     end
     
-    def get_query_result(job_id, batch_id, result_id)
+    def get_query_result(batch_id, result_id)
       headers = {"Content-Type" => "text/csv; charset=UTF-8"}
-      response = http_get("job/#{job_id}/batch/#{batch_id}/result/#{result_id}", headers)
+      response = @client.http_get("job/#{@job_id}/batch/#{batch_id}/result/#{result_id}", headers)
       
       lines = response.body.lines.to_a
       headers = CSV.parse_line(lines.shift).collect { |header| header.to_sym }
@@ -114,18 +134,14 @@ module SalesforceBulk
       result
     end
 
-    def self.batch_size
-      @@batch_size
-    end
-
     def update(data)
       @data = data
 
       @id = data['id']
       @job_id = data['jobId']
       @state = data['state']
-      @created_at = DateTime.parse(data['createdDate'])
-      @completed_at = DateTime.parse(data['systemModstamp'])
+      @created_at = DateTime.parse(data['createdDate']) rescue nil
+      @completed_at = DateTime.parse(data['systemModstamp']) rescue nil
       @processed_records = data['numberRecordsProcessed'].to_i
       @failed_records = data['numberRecordsFailed'].to_i
       @total_processing_time = data['totalProcessingTime'].to_i
@@ -162,16 +178,8 @@ module SalesforceBulk
       @number_records_failed > 0
     end
 
-    def result
-      @client.get_batch_result(@job_id, @batch_id)
-    end
-
-    def request
-      @client.get_batch_request(@job_id, @batch_id)
-    end
-
     def refresh
-      xml_data = @connection.http_get_xml("job/#{@job_id}/batch/#{@batch_id}")
+      xml_data = @client.http_get_xml("job/#{@job_id}/batch/#{@batch_id}")
       update(xml_data)
     end
   end
