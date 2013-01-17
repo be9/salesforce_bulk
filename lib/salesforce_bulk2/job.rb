@@ -60,7 +60,7 @@ module SalesforceBulk2
     end
 
     def self.find client, id
-      Job.new(client)
+      job = Job.new(client)
       job.refresh(id)
       job
     end
