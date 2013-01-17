@@ -6,19 +6,19 @@ module SalesforceBulk2
 
     # The host to use for authentication. Defaults to login.salesforce.com.
     attr_reader :host
-    
+
     # The instance host to use for API calls. Determined from login response.
     attr_reader :instance_host
-    
+
     # The Salesforce password
     attr_reader :password
-    
+
     # The Salesforce security token
     attr_reader :token
-    
+
     # The Salesforce username
     attr_reader :username
-    
+
     # The API version the client is using
     attr_reader :version
 
@@ -37,9 +37,9 @@ module SalesforceBulk2
         options = YAML.load_file(options)
         options.symbolize_keys!
       end
-      
+
       options.assert_valid_keys(:username, :password, :token, :debugging, :host, :version)
-      
+
       @username = options[:username]
       @password = "#{options[:password]}#{options[:token]}"
       @token    = options[:token] || ''
@@ -68,15 +68,15 @@ module SalesforceBulk2
       xml += "    </n1:login>"
       xml += "  </env:Body>"
       xml += "</env:Envelope>"
-      
+
       data = http_post_xml("/services/Soap/u/#{@version}", xml, 'Content-Type' => 'text/xml', 'SOAPAction' => 'login')
       result = data['Body']['loginResponse']['result']
-      
+
       @session_id = result['sessionId']
       @server_url = result['serverUrl']
       @instance_id = instance_id(@server_url)
       @instance_host = "#{@instance_id}.salesforce.com"
-      
+
       @api_path_prefix = "#{@@api_path_prefix}/#{@version}/"
 
       result
@@ -91,7 +91,7 @@ module SalesforceBulk2
       xml += '    <n1:logout xmlns:n1="urn:partner.soap.sforce.com" />'
       xml += '  </env:Body>'
       xml += '</env:Envelope>'
-      
+
       result = http_post_xml("/services/Soap/u/#{@version}", xml, 'Content-Type' => 'text/xml', 'SOAPAction' => 'logout')
 
       @session_id = nil
@@ -109,7 +109,7 @@ module SalesforceBulk2
 
     def http_post(path, body, headers={})
       headers = {'Content-Type' => 'application/xml'}.merge(headers)
-      
+
       #Are we connected?
       if connected?
         headers['X-SFDC-Session'] = @session_id
@@ -120,23 +120,23 @@ module SalesforceBulk2
       end
 
       response = https_request(host).post(path, body, headers)
-      
+
       if response.is_a?(Net::HTTPSuccess)
         response
       else
         raise SalesforceError.new(response)
       end
     end
-    
+
     def http_get(path, headers={})
       path = "#{@api_path_prefix}#{path}"
-      
+
       headers = {'Content-Type' => 'application/xml'}.merge(headers)
-      
+
       headers['X-SFDC-Session'] = @session_id if @session_id
-      
+
       response = https_request(@instance_host).get(path, headers)
-      
+
       if response.is_a?(Net::HTTPSuccess)
         response
       else
@@ -151,7 +151,7 @@ module SalesforceBulk2
     def http_get_xml(path, headers = {})
       XmlSimple.xml_in(http_get(path, headers).body, :ForceArray => false)
     end
-    
+
     def https_request(host)
       req = Net::HTTP.new(host, 443)
       req.use_ssl = true
@@ -172,7 +172,7 @@ module SalesforceBulk2
     end
 
     def find_job id
-      job = Job.find(connection, id)
+      job = Job.find(self, id)
       @jobs << job
       job
     end
@@ -190,34 +190,34 @@ module SalesforceBulk2
     def delete(sobject, data, batch_size = nil)
       perform_operation(:delete, sobject, data, :batch_size => nil)
     end
-    
+
     def insert(sobject, data, batch_size = nil)
       perform_operation(:insert, sobject, data, :batch_size => nil)
     end
-    
+
     def query(sobject, data, batch_size = nil)
       perform_operation(:query, sobject, data, :batch_size => nil)
     end
-    
+
     def update(sobject, data, batch_size = nil)
       perform_operation(:update, sobject, data, :batch_size => nil)
     end
-    
+
     def upsert(sobject, data, external_id, batch_size = nil)
       perform_operation(:upsert, sobject, data, :external_id => external_id, :batch_size => batch_size)
     end
-    
+
     def perform_operation(operation, sobject, data, options = {})
       job = new_job(operation: operation, object: sobject, :external_id => options[:external_id])
 
       job.add_data(data, options[:batch_size])
       job.close
-      
+
       until job.finished?
         job.refresh
         sleep 2
       end
-      
+
       return job.get_results
     end
   end

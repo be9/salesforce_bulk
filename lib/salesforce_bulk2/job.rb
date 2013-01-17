@@ -7,13 +7,13 @@ module SalesforceBulk2
     attr_reader :data
     attr_reader :xml_data
 
-    @@fields = [:id, :operation, :object, :createdById, :state, :createdDate, 
-      :systemModstamp, :externalIdFieldName, :concurrencyMode, :contentType, 
-      :numberBatchesQueued, :numberBatchesInProgress, :numberBatchesCompleted, 
-      :numberBatchesFailed, :totalBatches, :retries, :numberRecordsProcessed, 
-      :numberRecordsFailed, :totalProcessingTime, :apiActiveProcessingTime, 
+    @@fields = [:id, :operation, :object, :createdById, :state, :createdDate,
+      :systemModstamp, :externalIdFieldName, :concurrencyMode, :contentType,
+      :numberBatchesQueued, :numberBatchesInProgress, :numberBatchesCompleted,
+      :numberBatchesFailed, :totalBatches, :retries, :numberRecordsProcessed,
+      :numberRecordsFailed, :totalProcessingTime, :apiActiveProcessingTime,
       :apexProcessingTime, :apiVersion]
-    
+
     @@valid_operations = [:delete, :insert, :update, :upsert, :query]
     @@valid_concurrency_modes = ['Parallel', 'Serial']
 
@@ -40,12 +40,12 @@ module SalesforceBulk2
       external_id = options[:external_id]
       concurrency_mode = options[:concurrency_mode]
       object = options[:object]
-      
+
       if concurrency_mode
         concurrency_mode = concurrency_mode.capitalize
         raise ArgumentError.new("Invalid concurrency mode: #{concurrency_mode}") unless Job.valid_concurrency_mode?(concurrency_mode)
       end
-      
+
       xml  = '<?xml version="1.0" encoding="utf-8"?>'
       xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
       xml += "  <operation>#{operation}</operation>"
@@ -61,12 +61,12 @@ module SalesforceBulk2
 
     def self.find client, id
       Job.new(client)
-      job.id = id
-      job.refresh
+      job.refresh(id)
       job
     end
 
-    def refresh
+    def refresh(id = nil)
+      @id ||= id
       xml_data = @client.http_get_xml("job/#{@id}")
       update(xml_data)
     end
@@ -96,7 +96,7 @@ module SalesforceBulk2
       xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
       xml += '  <state>Aborted</state>'
       xml += '</jobInfo>'
-      
+
       @client.http_post_xml("job/#{@id}", xml)
     end
 
@@ -105,7 +105,7 @@ module SalesforceBulk2
       xml += '<jobInfo xmlns="http://www.force.com/2009/06/asyncapi/dataload">'
       xml += '  <state>Closed</state>'
       xml += '</jobInfo>'
-      
+
       @client.http_post_xml("job/#{@id}", xml)
     end
 
@@ -163,10 +163,10 @@ module SalesforceBulk2
       (@number_batches_queued == 0) and
       (@number_batches_in_progress == 0)
     end
-    
+
     def finished?
-      failed?  or 
-      aborted? or 
+      failed?  or
+      aborted? or
       (closed? and batches_finished?)
     end
 
@@ -177,15 +177,15 @@ module SalesforceBulk2
     def aborted?
       state? 'Aborted'
     end
-    
+
     def closed?
       state? 'Closed'
     end
-    
+
     def open?
       state? 'Open'
     end
-    
+
     def state?(value)
       @state.present? && @state.casecmp(value) == 0
     end
