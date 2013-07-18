@@ -9,6 +9,8 @@ module SalesforceBulk2
     def initialize(response)
       self.response = response
       
+      STDERR.puts "Error response in SalesforceBulk2: #{response.inspect}"
+
       data = XmlSimple.xml_in(response.body, 'ForceArray' => false)
       
       if data
